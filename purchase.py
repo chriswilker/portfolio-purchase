@@ -8,7 +8,12 @@ import math
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="""Display dollars of assets to purchase to track a
+        portfolio. See https://github.com/chriswilker/portfolio-purchases for
+        more information.
+        """
+    )
     parser.add_argument(
         "portfolio_file",
         type=str,
@@ -27,7 +32,9 @@ def main() -> None:
         help="money invested in security (same order as securities in portfolio yaml)",
     )
     parser.add_argument(
-        "-e", help="assets are etfs, not funds", action="store_true",
+        "-i",
+        help="display integer amounts of assets to purchase",
+        action="store_true",
     )
     args = parser.parse_args()
     with open(args.portfolio_file, "r") as stream:
@@ -36,7 +43,7 @@ def main() -> None:
         for i, asset in enumerate(portfolio):
             owned[asset] = args.amounts_owned[i]
 
-        if args.e:
+        if args.i:
             ep = etf_purchases(portfolio, args.purchase_amount, owned)
             print(etf_output(ep), end="")
         else:
