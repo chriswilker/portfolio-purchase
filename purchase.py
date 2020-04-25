@@ -1,6 +1,8 @@
 import argparse
 import yaml
 from typing import Dict, List, Tuple
+import urllib.request
+import json
 from collections import OrderedDict
 import math
 
@@ -24,6 +26,9 @@ def main() -> None:
         nargs="+",
         help="money invested in security (same order as securities in portfolio yaml)",
     )
+    parser.add_argument(
+        "-e", help="assets are etfs, not funds", action="store_true",
+    )
     args = parser.parse_args()
     with open(args.portfolio_file, "r") as stream:
         portfolio = yaml.safe_load(stream)
@@ -31,8 +36,12 @@ def main() -> None:
         for i, asset in enumerate(portfolio):
             owned[asset] = args.amounts_owned[i]
 
-        fp = fund_purchases(portfolio, args.purchase_amount, owned)
-        print(output(fp), end="")
+        if args.e:
+            ep = etf_purchases(portfolio, args.purchase_amount, owned)
+            print(etf_output(ep), end="")
+        else:
+            fp = fund_purchases(portfolio, args.purchase_amount, owned)
+            print(fund_output(fp), end="")
 
 
 def fund_purchases(
@@ -109,7 +118,89 @@ def assets_and_amount_to_buy_to_close_gap(
     return assets_to_buy, purchase_amount_to_close_gap
 
 
-def output(purchases: Dict) -> str:
+def etf_purchases(
+    desired_proportions: Dict,
+    purchase_amount: float,
+    amounts_owned: OrderedDict,
+) -> OrderedDict:
+    money_remaining = purchase_amount
+
+    purchases = OrderedDict()
+    for etf in desired_proportions.keys():
+        purchases[etf] = 0
+
+    prices = OrderedDict()
+    for etf in desired_proportions.keys():
+        prices[etf] = current_price(etf)
+
+    while etf:
+        etf = etf_to_purchase(
+            desired_proportions, money_remaining, amounts_owned, prices,
+        )
+        if etf:
+            money_remaining = money_remaining - prices[etf]
+            amounts_owned[etf] += prices[etf]
+            purchases[etf] += 1
+    return purchases
+
+
+def current_price(ticker: str) -> float:
+    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={ticker}"
+    contents = urllib.request.urlopen(url).read()
+    response = json.loads(contents)["quoteResponse"]
+    error = response["error"]
+    if error:
+        raise ValueError(f"Response from {url} contains an error:\n{error}")
+    else:
+        return response["result"][0]["regularMarketPrice"]
+
+
+def etf_to_purchase(
+    desired_proportions: Dict,
+    purchase_amount: float,
+    amounts_owned: OrderedDict,
+    prices: OrderedDict,
+) -> Tuple[float, OrderedDict, OrderedDict]:
+    # Get the proportional amounts of the assets owned, factoring in the
+    # additional money used for the purchase
+    total_owned = sum(amounts_owned.values()) + purchase_amount
+    props = OrderedDict()
+    for etf in amounts_owned.keys():
+        props[etf] = amounts_owned[etf] / total_owned
+
+    # figure out which purchases move closest to their ideal proportions
+    max_diff_reduction_per_dollar = 0.0
+    max_diff_reduction_etfs = []
+    for etf in props.keys():
+        if prices[etf] < purchase_amount:
+            prop_after_purchase = props[etf] + prices[etf] / total_owned
+            prop_diff_reduction = abs(
+                desired_proportions[etf] - props[etf]
+            ) - abs(desired_proportions[etf] - prop_after_purchase)
+            diff_reduction_per_dollar = prop_diff_reduction / prices[etf]
+            if diff_reduction_per_dollar > max_diff_reduction_per_dollar:
+                max_prop_diff_reduction_per_dollar = diff_reduction_per_dollar
+                max_diff_reduction_etfs.append(etf)
+
+    min_prop_after_purchase = 1.01
+    min_prop_etf = ""
+    for etf in max_diff_reduction_etfs:
+        prop_after_purchase = props[etf] + prices[etf] / total_owned
+        if prop_after_purchase < min_prop_after_purchase:
+            min_prop_after_purchase = prop_after_purchase
+            min_prop_etf = etf
+
+    return min_prop_etf
+
+
+def etf_output(purchases: Dict) -> str:
+    out = ""
+    for asset, purchase in purchases.items():
+        out += f'"{asset}": {purchase}\n'
+    return out
+
+
+def fund_output(purchases: Dict) -> str:
     out = ""
     for asset, purchase in purchases.items():
         out += f'"{asset}": {purchase:.2f}\n'
